@@ -52,7 +52,6 @@ Path("data/processed").mkdir(parents=True, exist_ok=True)
 with open("data/raw/berkeleytime_fall_2026.json", "w") as f:
     json.dump(classes, f, indent=2)
 
-# Class-level table
 class_rows = []
 
 for c in classes:
@@ -74,7 +73,6 @@ for c in classes:
 
 classes_df = pd.DataFrame(class_rows)
 
-# Course-level table
 course_rows = []
 
 for c in classes:
