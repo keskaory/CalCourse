@@ -1,123 +1,161 @@
 # CalCourse
 
-CalCourse is a personalized course planning system for UC Berkeley students. It helps students identify which courses best fit their academic background, interests, career goals, and practical constraints.
+[![Tests](https://github.com/keskaory/CalCourse/actions/workflows/tests.yml/badge.svg)](https://github.com/keskaory/CalCourse/actions/workflows/tests.yml)
 
-Rather than only helping users find classes, CalCourse focuses on the decision-making problem behind course selection: **what should a student take next, and why?**
+CalCourse is a personalized UC Berkeley course recommender that helps students decide what to take next based on their coursework, interests, and subject preferences.
 
-## Overview
+## Quickstart
 
-CalCourse builds a student-specific recommendation pipeline using academic and course-level information such as:
+```bash
+git clone https://github.com/keskaory/CalCourse.git
+cd CalCourse
 
-* completed coursework
-* prerequisites and eligibility
-* academic interests
-* career goals
-* course descriptions and subject areas
-* semester availability
-* workload and unit constraints
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 
-The goal is to generate **personalized course recommendations** and eventually **feasible semester plans** while making each recommendation explainable.
+python -m streamlit run app/app.py --server.fileWatcherType none
+```
+
+The app uses the Fall 2026 dataset already committed under `data/processed/` — no scraping or preprocessing required to run it. See [Data Pipeline](#data-pipeline) if you want to regenerate that data from scratch.
+
+## How It Works
+
+```text
+Student Profile
+      ↓
+Completed Courses + Interests + Preferred Subjects
+      ↓
+Prerequisite & Eligibility Filtering
+      ↓
+Progression Filtering
+      ↓
+Semantic Similarity Scoring (sentence-transformers)
+      ↓
+Hybrid Ranking (semantic score + subject-preference fit)
+      ↓
+Top 10 Recommended Courses
+```
+
+### Eligibility
+
+Course requirements are stored as semi-structured text, so CalCourse includes a custom prerequisite parsing pipeline that:
+
+* extracts explicit course references from requirement text
+* normalizes common subject-name variations, including cross-listed courses (e.g. `DATA C100` / `COMPSCI C100`) via a title/description-based alias map
+* handles shorthand references such as `MATH 53, 54, 55`
+* preserves requirement structure — including **AND/OR groups** (e.g. "STAT 134 or EECS 126, and MATH 54") rather than flattening every prerequisite into a single list
+
+Parsed prerequisite relationships are modeled as a directed graph using NetworkX. This lets CalCourse determine, for a given student:
+
+* which prerequisites a target course requires
+* which courses are unlocked by their completed coursework
+* which requirement groups are still unsatisfied
+* whether they're eligible for a course, honoring OR-alternatives and multi-course AND options
+
+A progression filter also removes lower-division courses in a subject once the student has completed an upper-division course in that same subject, so recommendations stay level-appropriate.
+
+Eligibility filtering runs before ranking, so recommendations satisfy the explicit course prerequisites captured by the V1 parser. (Non-course constraints — instructor consent, GPA, standing, equivalent preparation — are parsed and preserved but not yet enforced.)
+
+### Semantic Matching
+
+Course descriptions and student interests are embedded with `sentence-transformers/all-MiniLM-L6-v2`; relevance is scored by cosine similarity between a student's interest text and each eligible course's description.
+
+Course embeddings are precomputed offline (`course_embeddings_fall_2026.npy` + an index CSV) because course descriptions are static for a given semester snapshot — this avoids re-encoding thousands of course descriptions on every request, so the app only has to embed the student's interest text at query time.
+
+### Hybrid Ranking
+
+The final ranking blends semantic relevance with a subject-preference signal:
+
+```text
+final_score = 0.60 * semantic_score + 0.40 * subject_fit
+```
+
+## Evaluation
+
+Three ranking approaches are compared in [`notebooks/06_recommender_evaluation.ipynb`](notebooks/06_recommender_evaluation.ipynb) against 10 hand-labeled student profiles, using **Recall@10** and **NDCG@10**:
+
+| Method | Recall@10 | NDCG@10 |
+| --- | --- | --- |
+| TF-IDF | 0.35 | 0.32 |
+| Semantic | 0.52 | 0.49 |
+| **Hybrid** | **0.66** | **0.61** |
+
+The hybrid ranker produced the strongest overall results. Its semantic/subject weighting was selected using **leave-one-profile-out cross-validation**: for each held-out profile, the weight was chosen using only the other nine profiles, then scored on the one it never saw. All folds selected a semantic weight of `0.60` — the held-out cross-validated score (0.664 Recall@10, 0.607 NDCG@10) matches the in-sample hybrid result above, indicating a stable optimum rather than an artifact of tuning against the evaluation set.
+
+**Caveat:** this is a small (10-profile), hand-labeled evaluation set authored by the same person who built the ranker. Treat the results as a directional, controlled V1 benchmark — not a claim about real student outcomes.
 
 ## Data Pipeline
 
 Course and class information is collected from Berkeley course data sources and transformed into structured datasets for analysis and modeling.
 
-The current pipeline retrieves Fall 2026 data through BerkeleyTime's GraphQL interface and separates course-level metadata from semester-specific class records.
-
-The Fall 2026 dataset contains:
+The pipeline (`src/fetch_berkeley.py`) retrieves Fall 2026 data through BerkeleyTime's GraphQL interface and separates course-level metadata from semester-specific class records. The processed Fall 2026 dataset contains:
 
 * 15,573 class records
 * 4,287 unique courses
-* 2,119 courses in the final undergraduate recommendation pool
+* 2,077 courses in the final undergraduate recommendation pool
 
-## Prerequisite and Eligibility Modeling
+Raw scrape output (`data/raw/`, ~15MB) is excluded from version control; `data/processed/` — including the precomputed course embeddings — is committed so the app runs without rerunning the pipeline.
 
-Course requirements are stored as semi-structured text, so CalCourse includes a custom prerequisite parsing pipeline that:
+## Testing / CI
 
-* extracts explicit course references from requirement text
-* normalizes common subject-name variations
-* handles shorthand references such as `MATH 53, 54, 55`
-* preserves non-course constraints such as instructor consent, GPA, standing, and auditions
-
-Parsed prerequisite relationships are modeled as a directed graph using NetworkX.
-
-This allows CalCourse to identify:
-
-* prerequisites for a target course
-* courses unlocked by completed coursework
-* missing prerequisites
-* whether a student satisfies parsed course requirements
-
-Eligibility filtering is then applied before recommendation ranking so the system prioritizes courses a student can realistically take.
-
-## Recommendation System
-
-CalCourse is being developed as a ranking system rather than a simple course search.
-
-```text
-Student Profile
-      ↓
-Academic History + Interests + Career Goals
-      ↓
-Prerequisite & Eligibility Filtering
-      ↓
-Course Relevance Scoring
-      ↓
-Personalized Ranking
-      ↓
-Schedule Constraints
-      ↓
-Recommended Courses / Semester Plan
+```bash
+pytest -q
 ```
 
-The first recommendation baseline will use content-based ranking with TF-IDF and cosine similarity.
-
-Future ranking models will be evaluated against baseline strategies using metrics such as **Recall@K** and **NDCG@K**.
+Tests cover the parts of the system most likely to fail silently: OR/AND prerequisite groups, cross-listed course exclusion, the progression filter, and hybrid ranking order. GitHub Actions runs the suite on every push and pull request to `main`.
 
 ## Tech Stack
 
 * Python
-* pandas
-* GraphQL
+* pandas / numpy
+* GraphQL (BerkeleyTime API)
 * NetworkX
 * scikit-learn
-* SQL
-* Git/GitHub
+* sentence-transformers
+* Streamlit
+* pytest / GitHub Actions
 
 ## Project Structure
 
 ```text
 CalCourse/
+├── .github/workflows/     # CI (pytest on push/PR)
+├── app/
+│   └── app.py             # Streamlit interface
 ├── data/
-│   ├── raw/
-│   └── processed/
+│   ├── raw/                # gitignored — regenerate via src/fetch_berkeley.py
+│   └── processed/          # committed — what the app reads
+│       ├── recommendable_courses_fall_2026.csv
+│       ├── prerequisites_fall_2026.csv
+│       ├── prerequisites_grouped_fall_2026.csv
+│       ├── course_embeddings_fall_2026.npy      # precomputed sentence-transformer embeddings
+│       └── course_embedding_index_fall_2026.csv # course ↔ embedding row mapping
 ├── notebooks/
 │   ├── 01_eda.ipynb
 │   ├── 02_prerequisite_parsing.ipynb
 │   ├── 03_prerequisite_graph.ipynb
-│   └── 04_eligibility_filtering.ipynb
+│   ├── 04_eligibility_filtering.ipynb
+│   ├── 05_baseline_recommender.ipynb
+│   └── 06_recommender_evaluation.ipynb
 ├── src/
+│   ├── fetch_berkeley.py  # data ingestion
+│   ├── recommender.py     # eligibility filtering + ranking
+│   └── run_recommender.py
+├── tests/
+│   └── test_recommender.py
+├── LICENSE
 ├── README.md
 └── requirements.txt
 ```
 
-## Status
+## Limitations
 
-Currently in development.
+* Recommends individual courses for a single term — no scheduling, unit constraints, or multi-semester plan generation yet.
+* Ranking uses stated interests and subject preferences only; there's no career-goal-specific signal.
+* Non-course eligibility constraints (instructor consent, GPA, standing) are parsed but not enforced.
+* Evaluation is a small, hand-labeled benchmark rather than real usage data.
 
-**Completed**
+## License
 
-* GraphQL data ingestion pipeline
-* Fall 2026 course and class dataset construction
-* Exploratory data analysis and recommendation-pool filtering
-* Prerequisite parsing and normalization
-* Directed prerequisite graph construction
-* Student-specific eligibility filtering
-
-**Next**
-
-* TF-IDF baseline recommender
-* Personalized course ranking
-* Recommendation evaluation
-* Schedule optimization
-* Interactive course planning interface
+[MIT](LICENSE)
