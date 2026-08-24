@@ -4,17 +4,23 @@ import sys
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE_DIR))
 
+DATA_DIR = BASE_DIR / "data" / "processed"
+
 import pandas as pd
 import streamlit as st
 from sentence_transformers import SentenceTransformer
 
 from src.recommender import (
+    build_alias_map,
     build_prerequisite_graph,
     filter_eligible_courses,
     rank_hybrid_courses,
+    apply_progression_filter
 )
 
-DATA_DIR = BASE_DIR / "data" / "processed"
+grouped_prereqs = pd.read_csv(
+    DATA_DIR / "prerequisites_grouped_fall_2026.csv"
+)
 
 
 @st.cache_data
@@ -36,7 +42,12 @@ def load_model():
 
 
 courses, prereqs = load_data()
-graph = build_prerequisite_graph(prereqs)
+alias_map = build_alias_map(courses)
+
+graph = build_prerequisite_graph(
+    prereqs,
+    alias_map
+)
 model = load_model()
 
 st.title("CalCourse")
@@ -76,8 +87,16 @@ if st.button("Recommend Courses"):
     eligible_courses = filter_eligible_courses(
         courses,
         completed_courses,
-        graph
+        graph,
+        alias_map,
+        grouped_prereqs
     )
+
+    eligible_courses = apply_progression_filter(
+        eligible_courses,
+        completed_courses,
+        alias_map
+    )   
 
     eligible_courses["text"] = (
         eligible_courses["title"].fillna("")
@@ -117,6 +136,6 @@ if st.button("Recommend Courses"):
 
     st.dataframe(
         results,
-        use_container_width=True,
+        width="stretch",
         hide_index=True
     )
