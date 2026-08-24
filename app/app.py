@@ -1,5 +1,6 @@
 from pathlib import Path
 import sys
+import numpy as np 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE_DIR))
@@ -33,15 +34,38 @@ def load_data():
         DATA_DIR / "prerequisites_fall_2026.csv"
     )
 
-    return courses, prereqs
+    grouped_prereqs = pd.read_csv(
+        DATA_DIR / "prerequisites_grouped_fall_2026.csv"
+    )
+
+    embedding_index = pd.read_csv(
+        DATA_DIR / "course_embedding_index_fall_2026.csv"
+    )
+
+    course_embeddings = np.load(
+        DATA_DIR / "course_embeddings_fall_2026.npy"
+    )
+
+    return (
+        courses,
+        prereqs,
+        grouped_prereqs,
+        embedding_index,
+        course_embeddings,
+    )
 
 
 @st.cache_resource
 def load_model():
     return SentenceTransformer("all-MiniLM-L6-v2")
 
-
-courses, prereqs = load_data()
+(
+    courses,
+    prereqs,
+    grouped_prereqs,
+    embedding_index,
+    course_embeddings,
+) = load_data()
 alias_map = build_alias_map(courses)
 
 graph = build_prerequisite_graph(
@@ -98,23 +122,32 @@ if st.button("Recommend Courses"):
         alias_map
     )   
 
-    eligible_courses["text"] = (
-        eligible_courses["title"].fillna("")
-        + ". "
-        + eligible_courses["description"].fillna("")
+    eligible_courses = eligible_courses.merge(
+        embedding_index.reset_index().rename(
+         columns={"index": "embedding_idx"}
+        ),
+        on="course",
+        how="left"
     )
 
-    course_embeddings = model.encode(
-        eligible_courses["text"].tolist(),
-        show_progress_bar=False
+    eligible_courses = eligible_courses.dropna(
+        subset=["embedding_idx"]
+    ).copy()
+
+    eligible_courses["embedding_idx"] = (
+        eligible_courses["embedding_idx"].astype(int)
     )
+
+    eligible_embeddings = course_embeddings[
+        eligible_courses["embedding_idx"].to_numpy()
+    ]
 
     recommendations = rank_hybrid_courses(
         eligible_courses,
         interests,
         preferred_subjects,
         model,
-        course_embeddings
+        eligible_embeddings
     )
 
     results = recommendations[
