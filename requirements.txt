@@ -1,8 +1,8 @@
-numpy
-pandas
-networkx
-requests
-scikit-learn
-sentence-transformers
-streamlit
-pytest
+numpy==2.5.2
+pandas==3.0.5
+networkx==3.6.1
+requests==2.34.2
+scikit-learn==1.9.0
+sentence-transformers==6.0.0
+streamlit==1.62.0
+pytest==9.1.1

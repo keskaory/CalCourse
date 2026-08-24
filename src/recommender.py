@@ -217,8 +217,8 @@ def rank_hybrid_courses(
     )
 
     ranked["final_score"] = (
-        0.85 * ranked["semantic_score"]
-        + 0.15 * ranked["subject_fit"]
+        0.60 * ranked["semantic_score"]
+        + 0.40 * ranked["subject_fit"]
     )
 
     return ranked.sort_values(
@@ -274,9 +274,6 @@ def is_eligible_grouped(
             return False
 
     return True
-
-import re
-
 
 def get_course_number_value(course_number):
     """

@@ -20,3 +20,11 @@ __pycache__/
 # Editors
 .vscode/
 .idea/
+
+# Raw scrape output (15MB+; regenerate via src/fetch_berkeley.py).
+# data/processed/ stays tracked so a fresh clone can run the app
+# without reproducing the full preprocessing pipeline.
+data/raw/
+
+# Pytest
+.pytest_cache/
